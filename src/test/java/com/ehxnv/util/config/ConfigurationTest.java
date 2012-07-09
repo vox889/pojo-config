@@ -27,9 +27,17 @@
 
 package com.ehxnv.util.config;
 
+import com.ehxnv.util.config.annotation.Config;
+import com.ehxnv.util.config.annotation.Property;
+import com.ehxnv.util.config.extractor.ConfigPropertyNameExtractor;
+import com.ehxnv.util.config.translator.ConfigPropertyNameTranslator;
+import com.ehxnv.util.config.validator.ConfigPropertyValidator;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 
 /**
@@ -52,7 +60,78 @@ public class ConfigurationTest {
     }
 
     private interface MyMissingConfig {
-        Boolean getSomeBool();
+        Double getSomeDouble();
+    }
+
+    // purposely made this into static class for accessibility purpose
+    static class EngineThresholdPropertyValidator implements ConfigPropertyValidator<Double> {
+        @Override
+        public boolean isValid(final Double propertyValue) {
+            return (propertyValue.doubleValue() > 250.0);
+        }
+    }
+
+    private interface MyEngineConfiguration {
+        @Property(validator = EngineThresholdPropertyValidator.class)
+        Double getEngineThreshold();
+    }
+
+    static class SimpleExtractor implements ConfigPropertyNameExtractor {
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public boolean isValidMethodForExtraction(final Method method) {
+            return true;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public List<ConfigProperty.Word> extractPropertyNameFromMethodName(final String methodName) {
+            List<ConfigProperty.Word> propertyNameInWords = new ArrayList<ConfigProperty.Word>();
+
+            int startIdx = 0, curIdx = 0;
+            while (curIdx < methodName.length()) {
+                if (curIdx > 0 && Character.isUpperCase(methodName.charAt(curIdx))) {
+                    propertyNameInWords.add(new ConfigProperty.Word(methodName.substring(startIdx, curIdx).toLowerCase()));
+                    startIdx = curIdx;
+                }
+                curIdx++;
+            }
+
+            propertyNameInWords.add(new ConfigProperty.Word(methodName.substring(startIdx, curIdx).toLowerCase()));
+            return propertyNameInWords;
+
+        }
+    }
+
+    static class DotTranslator implements ConfigPropertyNameTranslator {
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public String translatePropertyNameIntoReadablePropertyName(final List<ConfigProperty.Word> propertyNameInWords) {
+            StringBuffer buffer = new StringBuffer();
+            for (int i=0; i<propertyNameInWords.size(); i++) {
+                if (i > 0) {
+                    buffer.append(".");
+                }
+
+                buffer.append(propertyNameInWords.get(i).getValue());
+            }
+
+            return buffer.toString();
+        }
+    }
+
+    @Config(extractor = SimpleExtractor.class, translator = DotTranslator.class)
+    private interface MyOtherEngineConfiguration {
+        Double engineThreshold();
+        String vendorName();
     }
 
     /**
@@ -133,11 +212,40 @@ public class ConfigurationTest {
      * <p>This test covers scenario where user passed in a configuration interface and those configuration properties
      * types are in String but can't be converted to expected property type</p>
      */
-    @Test
-    public void testFromPropertiesWithInvalidProperty() {
+    @Test(expected = ConfigurationException.class)
+    public void testFromPropertiesWithInvalidPropertyValue() {
         Properties properties = new Properties();
-        properties.put("some-bool", "we should pass boolean value here");
+        properties.put("some-double", "we should pass double value here");
 
         Configuration.fromProperties(properties, MyMissingConfig.class);
+    }
+
+    /**
+     * Test {@code fromProperties} of {@link Configuration}.
+     * <p>This test covers scenario where user passed in a custom property validator which validates that engine
+     * threshold have to be more than 250</p>
+     */
+    @Test(expected = ConfigurationException.class)
+    public void testFromPropertiesWithCustomPropertyValidator() {
+        Properties properties = new Properties();
+        properties.put("engine-threshold", Double.valueOf(249.0d));
+
+        Configuration.fromProperties(properties, MyEngineConfiguration.class);
+    }
+
+    /**
+     * Test {@code fromProperties} of {@link Configuration}.
+     * <p>This test covers scenario where user passed in a custom extractor which simply uses all methods in the
+     * configuration interface and a custom extractor which uses "." instead of efault "-" to join property name (in words)</p>
+     */
+    @Test
+    public void testFromPropertiesWithCustomExtractorAndTranslator() {
+        Properties properties = new Properties();
+        properties.put("vendor.name", "FooBar");
+        properties.put("engine.threshold", Double.valueOf(249.0d));
+
+        MyOtherEngineConfiguration configuration = Configuration.fromProperties(properties, MyOtherEngineConfiguration.class);
+        assertEquals("FooBar", configuration.vendorName());
+        assertEquals(Double.valueOf(249.0d), configuration.engineThreshold());
     }
 }

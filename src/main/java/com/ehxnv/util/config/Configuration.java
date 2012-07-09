@@ -83,7 +83,12 @@ public class Configuration {
             if (!typeMatched) {
                 // convert property value using each property converter
                 ConfigPropertyConverter configPropertyConverter = createConverter(configProperty.getConverter());
-                propertyValue = configPropertyConverter.convertFromString(propertyValue.toString());
+
+                try {
+                    propertyValue = configPropertyConverter.convertFromString(propertyValue.toString());
+                } catch (RuntimeException ex) {
+                    throw new ConfigurationException(String.format("Failed to convert \"%s\" into %s type", propertyValue.toString(), configProperty.getType().getClazz()));
+                }
             }
 
             // validate property value using each property validator
